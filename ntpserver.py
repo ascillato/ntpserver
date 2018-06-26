@@ -2,12 +2,16 @@ import datetime
 import socket
 import struct
 import time
-import Queue
 import threading
 import select
+import sys
+if sys.version_info[0] == 2:
+    import Queue as queue
+else:
+    import queue
 
-TASK_QUEUE = Queue.Queue()
-STOP_FLAG = False
+taskQueue = queue.Queue()
+stopFlag = False
 
 def system_to_ntp_time(timestamp):
     """Convert a system time to a NTP time.
@@ -242,19 +246,19 @@ class RecvThread(threading.Thread):
     def run(self):
         global TASK_QUEUE, STOP_FLAG
         while True:
-            if STOP_FLAG is True:
-                print "RecvThread Ended"
+            if stopFlag == True:
+                print("RecvThread Ended")
                 break
             rlist, _, _ = select.select([self.my_socket], [], [], 1)
             if len(rlist) != 0:
-                print "Received %d packets" % len(rlist)
-                for temp_socket in rlist:
+                print("Received %d packets" % len(rlist))
+                for tempSocket in rlist:
                     try:
-                        data, addr = temp_socket.recvfrom(1024)
-                        recv_timestamp = recv_timestamp = system_to_ntp_time(time.time())
-                        TASK_QUEUE.put((data, addr, recv_timestamp))
-                    except socket.error, msg:
-                        print msg
+                        data,addr = tempSocket.recvfrom(1024)
+                        recvTimestamp = recvTimestamp = system_to_ntp_time(time.time())
+                        taskQueue.put((data,addr,recvTimestamp))
+                    except socket.error as msg:
+                        print(msg);
 
 class WorkThread(threading.Thread):
     def __init__(self, my_socket):
@@ -263,53 +267,51 @@ class WorkThread(threading.Thread):
     def run(self):
         global TASK_QUEUE, STOP_FLAG
         while True:
-            if STOP_FLAG is True:
-                print "WorkThread Ended"
+            if stopFlag == True:
+                print("WorkThread Ended")
                 break
             try:
-                data, addr, recv_timestamp = TASK_QUEUE.get(timeout=1)
-                recv_packet = NTPPacket()
-                recv_packet.from_data(data)
-                time_stamp_high, time_stamp_low = recv_packet.get_tx_time_stamp()
-                send_packet = NTPPacket(version=3, mode=4)
-                send_packet.stratum = 2
-                send_packet.poll = 10
-                # send_packet.precision = 0xfa
-                # send_packet.root_delay = 0x0bfa
-                # send_packet.root_dispersion = 0x0aa7
-                # send_packet.ref_id = 0x808a8c2c
-                send_packet.ref_timestamp = recv_timestamp-5
-                send_packet.set_origin_time_stamp(time_stamp_high, time_stamp_low)
-                send_packet.recv_timestamp = recv_timestamp
-                send_packet.tx_timestamp = system_to_ntp_time(time.time())
-                self.my_socket.sendto(send_packet.to_data(), addr)
-                print "Sended to %s:%d" % (addr[0], addr[1])
-            except Queue.Empty:
+                data,addr,recvTimestamp = taskQueue.get(timeout=1)
+                recvPacket = NTPPacket()
+                recvPacket.from_data(data)
+                timeStamp_high,timeStamp_low = recvPacket.GetTxTimeStamp()
+                sendPacket = NTPPacket(version=recvPacket.version,mode=4)
+                sendPacket.stratum = 2
+                sendPacket.poll = 10
+                '''
+                sendPacket.precision = 0xfa
+                sendPacket.root_delay = 0x0bfa
+                sendPacket.root_dispersion = 0x0aa7
+                sendPacket.ref_id = 0x808a8c2c
+                '''
+                sendPacket.ref_timestamp = recvTimestamp-5
+                sendPacket.SetOriginTimeStamp(timeStamp_high,timeStamp_low)
+                sendPacket.recv_timestamp = recvTimestamp
+                sendPacket.tx_timestamp = system_to_ntp_time(time.time())
+                socket.sendto(sendPacket.to_data(),addr)
+                print("Sended to %s:%d" % (addr[0],addr[1]))
+            except queue.Empty:
                 continue
 
-def main():
-    global STOP_FLAG
-    listen_ip = "0.0.0.0"
-    listen_port = 123
-    listen_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    listen_socket.bind((listen_ip, listen_port))
-    print "local socket: ", listen_socket.getsockname()
-    recv_thread = RecvThread(listen_socket)
-    recv_thread.start()
-    work_thread = WorkThread(listen_socket)
-    work_thread.start()
 
-    while True:
-        try:
-            time.sleep(0.5)
-        except KeyboardInterrupt:
-            print "Exiting..."
-            STOP_FLAG = True
-            recv_thread.join()
-            work_thread.join()
-            #listen_socket.close()
-            print "Exited"
-            break
+listenIp = "0.0.0.0"
+listenPort = 123
+socket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+socket.bind((listenIp,listenPort))
+print("local socket: ", socket.getsockname());
+recvThread = RecvThread(socket)
+recvThread.start()
+workThread = WorkThread(socket)
+workThread.start()
 
-if __name__ == '__main__':
-    main()
+while True:
+    try:
+        time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("Exiting...")
+        stopFlag = True
+        recvThread.join()
+        workThread.join()
+        #socket.close()
+        print("Exited")
+        break
